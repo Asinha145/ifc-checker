@@ -8,6 +8,7 @@ const { db, DATA_DIR } = require('./db');
 const IFCParser         = require('./parsers/ifc-parser');
 const { parseEDB }      = require('./parsers/edb-parser');
 const { computeDelta, LAYERS } = require('./parsers/delta');
+const { saveResult, loadAllResults, isConfigured: ghConfigured } = require('./github-store');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -54,22 +55,38 @@ app.post('/api/submit', upload.fields([
         const delta = computeDelta(ifcData, edbData);
 
         // ── Save to DB ─────────────────────────────────────────────────
+        const submittedAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
         const stmt = db.prepare(`
             INSERT INTO submissions
-                (cage_name, prod_number, edb_type, ifc_data, edb_data, delta, c01_ifc, pass_fail)
+                (cage_name, prod_number, edb_type, submitted_at, ifc_data, edb_data, delta, c01_ifc, pass_fail)
             VALUES
-                (@cage_name, @prod_number, @edb_type, @ifc_data, @edb_data, @delta, @c01_ifc, @pass_fail)
+                (@cage_name, @prod_number, @edb_type, @submitted_at, @ifc_data, @edb_data, @delta, @c01_ifc, @pass_fail)
         `);
         const info = stmt.run({
             cage_name  : cageName,
             prod_number: prodNo || null,
             edb_type   : edbData.edbType,
+            submitted_at: submittedAt,
             ifc_data   : JSON.stringify(ifcData),
             edb_data   : JSON.stringify(edbData),
             delta      : JSON.stringify(delta),
             c01_ifc    : ifcData.c01Rejected ? 1 : 0,
             pass_fail  : delta.passFail,
         });
+
+        // ── Save to GitHub ─────────────────────────────────────────────
+        const fileStem = `${cageName}_${submittedAt.replace(/[ :]/g, '-')}`;
+        saveResult(fileStem, {
+            cage_name  : cageName,
+            prod_number: prodNo || null,
+            edb_type   : edbData.edbType,
+            submitted_at: submittedAt,
+            ifc_data   : ifcData,
+            edb_data   : edbData,
+            delta      : delta,
+            c01_ifc    : ifcData.c01Rejected ? 1 : 0,
+            pass_fail  : delta.passFail,
+        }).catch(e => console.error('GitHub save error:', e.message));
 
         res.json({
             id       : info.lastInsertRowid,
@@ -270,5 +287,47 @@ function addSummarySheet(wb, rows) {
 // ── Helpers ───────────────────────────────────────────────────────────────
 function datestamp() { return new Date().toISOString().slice(0,10).replace(/-/g,''); }
 
+// ── Startup: sync from GitHub into SQLite ────────────────────────────────
+async function syncFromGitHub() {
+    if (!ghConfigured()) {
+        console.log('GitHub storage not configured — using local SQLite only');
+        return;
+    }
+    const results = await loadAllResults();
+    const checkExists = db.prepare(
+        'SELECT 1 FROM submissions WHERE cage_name = ? AND submitted_at = ?'
+    );
+    const insert = db.prepare(`
+        INSERT INTO submissions
+            (cage_name, prod_number, edb_type, submitted_at, ifc_data, edb_data, delta, c01_ifc, pass_fail)
+        VALUES
+            (@cage_name, @prod_number, @edb_type, @submitted_at, @ifc_data, @edb_data, @delta, @c01_ifc, @pass_fail)
+    `);
+    let inserted = 0;
+    for (const r of results) {
+        try {
+            if (checkExists.get(r.cage_name, r.submitted_at)) continue;
+            insert.run({
+                cage_name  : r.cage_name,
+                prod_number: r.prod_number || null,
+                edb_type   : r.edb_type,
+                submitted_at: r.submitted_at,
+                ifc_data   : JSON.stringify(r.ifc_data),
+                edb_data   : JSON.stringify(r.edb_data),
+                delta      : JSON.stringify(r.delta),
+                c01_ifc    : r.c01_ifc || 0,
+                pass_fail  : r.pass_fail,
+            });
+            inserted++;
+        } catch (e) {
+            console.warn(`Skipped ${r.cage_name}: ${e.message}`);
+        }
+    }
+    console.log(`GitHub sync: ${inserted} new / ${results.length} total`);
+}
+
 // ── Start ─────────────────────────────────────────────────────────────────
-app.listen(PORT, () => console.log(`IFC Checker running on http://localhost:${PORT}`));
+app.listen(PORT, () => {
+    console.log(`IFC Checker running on http://localhost:${PORT}`);
+    syncFromGitHub().catch(e => console.error('Startup sync failed:', e.message));
+});

@@ -841,6 +841,15 @@ class IFCParser {
 }
 
 // ── Layer stats extraction for checker ───────────────────────────────
+const _MESH_LAYER_SET      = new Set(['F1A','F3A','F5A','F7A','N1A','N3A','N5A','N7A']);
+const _NON_MESH_PREFIXES   = ['VS','HS','LK','LB'];
+const _NON_MESH_EXACT      = new Set(['PRL','PRC']);
+function _isNonMeshLayer(name) {
+    if (!name) return false;
+    if (_NON_MESH_EXACT.has(name)) return true;
+    return _NON_MESH_PREFIXES.some(p => name.startsWith(p));
+}
+
 IFCParser.prototype.extractCheckerData = function(bars) {
     const result = {};
     const byLayer = {};
@@ -871,12 +880,49 @@ IFCParser.prototype.extractCheckerData = function(bars) {
             },
         };
     }
+
+    // ── UDL Factor ─────────────────────────────────────────────────────────
+    // UDL = nonMeshFormulaWeight / meshFormulaWeight (geometry-based weights)
+    let meshFW = 0, nonMeshFW = 0;
+    bars.forEach(bar => {
+        const fw    = bar.Formula_Weight || 0;
+        const layer = bar.Avonmouth_Layer_Set;
+        if (_MESH_LAYER_SET.has(layer))      meshFW    += fw;
+        else if (_isNonMeshLayer(layer))     nonMeshFW += fw;
+    });
+    const udl = meshFW > 0 ? +(nonMeshFW / meshFW).toFixed(4) : null;
+
+    // ── Wall Width ─────────────────────────────────────────────────────────
+    // Mirrors avonmouth-cage-v2 logic:
+    //   1. Smallest coordinate spread of ALL bars (mm) = cage outer-to-outer width.
+    //   2. Add 100 mm cover on each side → raw wall thickness.
+    //   3. Round UP to nearest standard wall thickness.
+    // Standard thicknesses (matching cage-v2 roundWallThicknessM):
+    const _WALL_STD_MM = [300, 500, 800, 1100, 1500, 2600];
+    const xs = [], ys = [], zs = [];
+    bars.forEach(bar => {
+        if (bar.Start_X != null) { xs.push(bar.Start_X, bar.End_X); }
+        if (bar.Start_Y != null) { ys.push(bar.Start_Y, bar.End_Y); }
+        if (bar.Start_Z != null) { zs.push(bar.Start_Z, bar.End_Z); }
+    });
+    const _spread = arr => arr.length ? Math.max(...arr) - Math.min(...arr) : 0;
+    const spreads = [_spread(xs), _spread(ys), _spread(zs)].filter(s => s > 10).sort((a,b) => a-b);
+    let wallWidth = null;
+    if (spreads.length > 0) {
+        const overallWidthMm = spreads[0];
+        const rawMm = overallWidthMm + 100;
+        const stdMm = _WALL_STD_MM.find(v => v >= rawMm) || 2600;
+        wallWidth = +(stdMm / 1000).toFixed(3);
+    }
+
     return {
-        checkerLayers: result,
-        c01Rejected  : this.isRejected,
-        unknownCount : this.unknownCount,
+        checkerLayers : result,
+        udl           : udl,
+        wallWidth     : wallWidth,
+        c01Rejected   : this.isRejected,
+        unknownCount  : this.unknownCount,
         duplicateCount: this.duplicateCount,
-        totalBars    : bars.length,
+        totalBars     : bars.length,
     };
 };
 
