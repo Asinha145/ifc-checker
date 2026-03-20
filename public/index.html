@@ -314,6 +314,28 @@ function buildDeltaTable(delta) {
     if (!tbody.children.length) {
         tbody.innerHTML = '<tr><td colspan="6" style="color:#484f58;text-align:center;padding:14px">No layer data to compare</td></tr>';
     }
+
+    // ── UDL and Wall Width rows (always shown, excluded from pass/fail) ──
+    const divider = document.createElement('tr');
+    divider.innerHTML = `<td colspan="6" style="background:#21262d;padding:5px 10px;font-size:.75rem;color:#7d8590;font-weight:600;letter-spacing:.05em">EDB REFERENCE VALUES (not scored)</td>`;
+    tbody.appendChild(divider);
+
+    [
+        ['UDL Factor',        delta.udl,       ''],
+        ['Concrete Wall Width (m)', delta.wallWidth, ''],
+    ].forEach(([label, m]) => {
+        if (!m) return;
+        const statusClass = { MATCH:'match', DIFF:'diff', EDB_ONLY:'edb-only', IFC_ONLY:'ifc-only' }[m.status] || '';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td></td>
+            <td style="color:#7d8590">${label}</td>
+            <td>${m.ifc ?? '<span class="null">—</span>'}</td>
+            <td>${m.edb ?? '<span class="null">—</span>'}</td>
+            <td class="null">—</td>
+            <td class="${statusClass}">${m.status}</td>`;
+        tbody.appendChild(tr);
+    });
 }
 
 // ── Results page ──────────────────────────────────────────────────────────
