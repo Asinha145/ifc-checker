@@ -1,0 +1,16 @@
+{
+  "name": "ifc-checker",
+  "version": "1.0.0",
+  "description": "IFC vs EDB backtest checker",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.4.3",
+    "exceljs": "^4.4.0",
+    "express": "^4.18.2",
+    "multer": "^1.4.5-lts.1"
+  }
+}

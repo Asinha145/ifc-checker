@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>IFC Checker</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#0d1117;color:#e6edf3;min-height:100vh}
+
+/* Nav */
+nav{background:#161b22;border-bottom:1px solid #30363d;padding:0 24px;display:flex;align-items:center;gap:0;height:48px}
+nav .brand{font-weight:700;color:#f0f6fc;margin-right:28px;font-size:1rem}
+nav button{background:none;border:none;color:#7d8590;padding:0 14px;height:48px;font-size:0.87rem;cursor:pointer;border-bottom:2px solid transparent}
+nav button.active{color:#f0f6fc;border-bottom-color:#58a6ff}
+nav button:hover:not(.active){color:#e6edf3}
+.ml-auto{margin-left:auto}
+
+/* Pages */
+.page{display:none;padding:28px 24px;max-width:1100px;margin:0 auto}
+.page.active{display:block}
+
+/* Cards */
+.card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px}
+.card+.card{margin-top:16px}
+h2{font-size:1rem;font-weight:600;color:#f0f6fc;margin-bottom:14px}
+
+/* Submit form */
+.upload-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.upload-box{border:2px dashed #30363d;border-radius:8px;padding:24px;text-align:center;cursor:pointer;transition:border-color .15s}
+.upload-box:hover,.upload-box.drag{border-color:#58a6ff}
+.upload-box.filled{border-color:#238636;border-style:solid}
+.upload-box svg{opacity:.4;margin-bottom:8px}
+.upload-box p{font-size:.82rem;color:#8b949e}
+.upload-box .fname{font-size:.8rem;color:#3fb950;font-family:monospace;margin-top:6px;word-break:break-all}
+input[type=file]{display:none}
+
+.field-row{display:flex;gap:12px;align-items:flex-end;margin-bottom:16px}
+.field{display:flex;flex-direction:column;gap:5px;flex:1}
+label{font-size:.8rem;color:#7d8590}
+input[type=text]{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px 10px;color:#e6edf3;font-size:.88rem;width:100%}
+input[type=text]:focus{outline:none;border-color:#58a6ff}
+
+/* Buttons */
+.btn{padding:9px 20px;border-radius:6px;border:none;font-size:.87rem;font-weight:600;cursor:pointer;transition:opacity .15s}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn-primary{background:#238636;color:#fff}
+.btn-primary:hover:not(:disabled){background:#2ea043}
+.btn-secondary{background:#21262d;color:#e6edf3;border:1px solid #30363d}
+.btn-secondary:hover:not(:disabled){background:#30363d}
+.btn-blue{background:#1f6feb;color:#fff}
+.btn-blue:hover:not(:disabled){background:#388bfd}
+
+/* Result panel */
+#resultPanel{display:none;margin-top:20px}
+.result-header{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.badge{padding:4px 10px;border-radius:12px;font-size:.8rem;font-weight:700}
+.badge.pass{background:#1a4a2e;color:#3fb950}
+.badge.fail{background:#4a1a1a;color:#f85149}
+.badge.ubar{background:#1f3a5f;color:#79c0ff}
+.badge.strut{background:#3d2e00;color:#e3b341}
+.badge.c01{background:#4a1a1a;color:#f85149}
+.stat-row{display:flex;gap:20px;margin-bottom:16px;flex-wrap:wrap}
+.stat{display:flex;flex-direction:column}
+.stat-val{font-size:1.4rem;font-weight:700;color:#f0f6fc}
+.stat-lbl{font-size:.72rem;color:#7d8590;text-transform:uppercase;letter-spacing:.05em}
+
+/* Delta table */
+.delta-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.8rem}
+th{background:#21262d;padding:7px 10px;text-align:left;font-weight:600;color:#8b949e;border-bottom:1px solid #30363d;white-space:nowrap}
+td{padding:6px 10px;border-bottom:1px solid #21262d;font-family:monospace}
+tr:last-child td{border-bottom:none}
+.match{color:#3fb950}
+.diff{color:#f85149;font-weight:700}
+.ifc-only{color:#e3b341}
+.edb-only{color:#79c0ff}
+.null{color:#484f58}
+
+/* Results list */
+.results-toolbar{display:flex;gap:10px;margin-bottom:16px;align-items:center}
+.results-toolbar input{flex:1;max-width:280px}
+#resultsList{display:flex;flex-direction:column;gap:8px}
+.result-row{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;display:flex;align-items:center;gap:14px;cursor:pointer;transition:border-color .15s}
+.result-row:hover{border-color:#484f58}
+.result-row .cage{font-weight:600;color:#f0f6fc;flex:1;font-size:.9rem}
+.result-row .meta{font-size:.78rem;color:#7d8590}
+.result-row .pf{font-weight:700;font-size:.8rem;min-width:42px;text-align:right}
+.result-row .pf.pass{color:#3fb950}
+.result-row .pf.fail{color:#f85149}
+
+/* Spinner */
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Toast */
+#toast{position:fixed;bottom:20px;right:20px;background:#238636;color:#fff;padding:10px 16px;border-radius:8px;font-size:.85rem;display:none;z-index:99}
+#toast.err{background:#b91c1c}
+</style>
+</head>
+<body>
+
+<nav>
+  <span class="brand">IFC Checker</span>
+  <button class="active" onclick="showPage('submit',this)">Submit Cage</button>
+  <button onclick="showPage('results',this)">All Results</button>
+  <button class="ml-auto btn-secondary btn" style="height:34px;padding:0 14px" onclick="exportExcel()">Export Excel</button>
+</nav>
+
+<!-- ── Submit page ──────────────────────────────────────────────────────── -->
+<div id="page-submit" class="page active">
+  <div class="card">
+    <h2>Submit a cage for checking</h2>
+
+    <div class="upload-grid">
+      <div class="upload-box" id="ifcBox" onclick="document.getElementById('ifcInput').click()"
+           ondragover="dz(event,this,true)" ondragleave="dz(event,this,false)" ondrop="drop(event,'ifc')">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+        </svg>
+        <p>Drop IFC file here or click</p>
+        <div class="fname" id="ifcName"></div>
+      </div>
+      <div class="upload-box" id="edbBox" onclick="document.getElementById('edbInput').click()"
+           ondragover="dz(event,this,true)" ondragleave="dz(event,this,false)" ondrop="drop(event,'edb')">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+          <polyline points="10 9 9 9 8 9"/>
+        </svg>
+        <p>Drop EDB Excel file here or click</p>
+        <div class="fname" id="edbName"></div>
+      </div>
+    </div>
+    <input type="file" id="ifcInput" accept=".ifc" onchange="picked('ifc',this)">
+    <input type="file" id="edbInput" accept=".xlsx,.xlsm,.xls" onchange="picked('edb',this)">
+
+    <div class="field-row">
+      <div class="field" style="max-width:220px">
+        <label>Production Number</label>
+        <input type="text" id="prodNo" placeholder="e.g. 755">
+      </div>
+      <button class="btn btn-primary" id="btnSubmit" onclick="submit()" disabled>
+        Analyse &amp; Check
+      </button>
+    </div>
+  </div>
+
+  <!-- Result panel -->
+  <div id="resultPanel">
+    <div class="card">
+      <div class="result-header">
+        <span id="rCageName" style="font-size:1.1rem;font-weight:700;color:#f0f6fc"></span>
+        <span class="badge" id="rPF"></span>
+        <span class="badge" id="rEdbType" style="display:none"></span>
+        <span class="badge c01" id="rC01" style="display:none">C01 Rejected</span>
+      </div>
+      <div class="stat-row">
+        <div class="stat"><span class="stat-val" id="rMatch">—</span><span class="stat-lbl">Metrics match</span></div>
+        <div class="stat"><span class="stat-val" id="rDiff">—</span><span class="stat-lbl">Differences</span></div>
+        <div class="stat"><span class="stat-val" id="rRate">—</span><span class="stat-lbl">Pass rate</span></div>
+        <div class="stat"><span class="stat-val" id="rBars">—</span><span class="stat-lbl">Total bars</span></div>
+      </div>
+      <div class="delta-wrap">
+        <table id="deltaTable">
+          <thead>
+            <tr>
+              <th>Layer</th>
+              <th>Metric</th>
+              <th>IFC</th>
+              <th>EDB</th>
+              <th>Δ</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="deltaBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Results page ────────────────────────────────────────────────────── -->
+<div id="page-results" class="page">
+  <div class="card">
+    <div class="results-toolbar">
+      <input type="text" id="searchBox" placeholder="Search cage name…" oninput="filterResults()">
+      <select id="pfFilter" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:7px 10px;color:#e6edf3;font-size:.85rem" onchange="filterResults()">
+        <option value="">All</option>
+        <option value="PASS">PASS only</option>
+        <option value="FAIL">FAIL only</option>
+      </select>
+    </div>
+    <div id="resultsList"><p style="color:#484f58;font-size:.85rem">No results yet.</p></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let files = { ifc: null, edb: null };
+let allResults = [];
+
+// ── Upload helpers ────────────────────────────────────────────────────────
+function dz(e, el, over) { e.preventDefault(); el.classList.toggle('drag', over); }
+function drop(e, type) {
+    e.preventDefault();
+    document.getElementById(type + 'Box').classList.remove('drag');
+    const f = e.dataTransfer.files[0];
+    if (f) setFile(type, f);
+}
+function picked(type, input) { if (input.files[0]) setFile(type, input.files[0]); }
+function setFile(type, f) {
+    files[type] = f;
+    const box = document.getElementById(type + 'Box');
+    box.classList.add('filled');
+    document.getElementById(type + 'Name').textContent = f.name;
+    // Auto-fill prod number from ARMF lookup if we have cage name
+    checkReady();
+}
+function checkReady() {
+    document.getElementById('btnSubmit').disabled = !(files.ifc && files.edb);
+}
+
+// ── Submit ────────────────────────────────────────────────────────────────
+async function submit() {
+    const btn = document.getElementById('btnSubmit');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Analysing…';
+
+    const fd = new FormData();
+    fd.append('ifc', files.ifc);
+    fd.append('edb', files.edb);
+    fd.append('prod_number', document.getElementById('prodNo').value.trim());
+
+    try {
+        const resp = await fetch('/api/submit', { method: 'POST', body: fd });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Server error');
+        showResult(data);
+        toast('Submitted — ' + data.cageName);
+    } catch (err) {
+        toast(err.message, true);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Analyse & Check';
+    }
+}
+
+// ── Show result ───────────────────────────────────────────────────────────
+function showResult(data) {
+    const { cageName, edbType, ifcData, delta } = data;
+    const s = delta.summary;
+
+    document.getElementById('rCageName').textContent = cageName;
+
+    const pfBadge = document.getElementById('rPF');
+    pfBadge.textContent = delta.passFail;
+    pfBadge.className = 'badge ' + (delta.passFail === 'PASS' ? 'pass' : 'fail');
+
+    const typeBadge = document.getElementById('rEdbType');
+    typeBadge.textContent = edbType === 'ubar' ? 'U-bar EDB' : 'Strut EDB';
+    typeBadge.className = 'badge ' + edbType;
+    typeBadge.style.display = 'inline-block';
+
+    const c01 = document.getElementById('rC01');
+    c01.style.display = ifcData.c01Rejected ? 'inline-block' : 'none';
+
+    document.getElementById('rMatch').textContent = s.match;
+    document.getElementById('rDiff').textContent  = s.diff + (s.ifcOnly ? ` (+${s.ifcOnly} IFC only)` : '');
+    document.getElementById('rRate').textContent  = (s.passRate ?? '—') + '%';
+    document.getElementById('rBars').textContent  = ifcData.totalBars;
+
+    buildDeltaTable(delta);
+    document.getElementById('resultPanel').style.display = 'block';
+    document.getElementById('resultPanel').scrollIntoView({ behavior: 'smooth' });
+}
+
+function buildDeltaTable(delta) {
+    const tbody = document.getElementById('deltaBody');
+    tbody.innerHTML = '';
+    const LAYERS = ['F1A','F3A','F5A','F7A','N1A','N3A','N5A','N7A'];
+    const METRICS = [
+        ['hori','minDia','H MinDia (mm)'],
+        ['hori','maxDia','H MaxDia (mm)'],
+        ['hori','count', 'H Count'],
+        ['vert','minDia','V MinDia (mm)'],
+        ['vert','maxDia','V MaxDia (mm)'],
+        ['vert','height','V Height (m)'],
+    ];
+    LAYERS.forEach(layer => {
+        const dl = delta.layers?.[layer];
+        if (!dl) return;
+        let first = true;
+        METRICS.forEach(([face, metric, label]) => {
+            const m = dl[face]?.[metric];
+            if (!m || m.status === 'BOTH_NULL') return;
+            const tr = document.createElement('tr');
+            const statusClass = { MATCH:'match', DIFF:'diff', IFC_ONLY:'ifc-only', EDB_ONLY:'edb-only', BOTH_NULL:'null' }[m.status] || '';
+            tr.innerHTML = `
+                <td>${first ? `<strong>${layer}</strong>` : ''}</td>
+                <td style="color:#7d8590">${label}</td>
+                <td>${m.ifc ?? '<span class="null">—</span>'}</td>
+                <td>${m.edb ?? '<span class="null">—</span>'}</td>
+                <td class="${m.diff !== null && m.diff !== 0 ? 'diff' : 'null'}">${m.diff !== null ? (m.diff > 0 ? '+' : '') + m.diff : '—'}</td>
+                <td class="${statusClass}">${m.status}</td>`;
+            tbody.appendChild(tr);
+            first = false;
+        });
+    });
+    if (!tbody.children.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="color:#484f58;text-align:center;padding:14px">No layer data to compare</td></tr>';
+    }
+}
+
+// ── Results page ──────────────────────────────────────────────────────────
+async function loadResults() {
+    const resp = await fetch('/api/results');
+    allResults = await resp.json();
+    renderResults(allResults);
+}
+
+function renderResults(rows) {
+    const el = document.getElementById('resultsList');
+    if (!rows.length) { el.innerHTML = '<p style="color:#484f58;font-size:.85rem">No results yet.</p>'; return; }
+    el.innerHTML = rows.map(r => {
+        const s = r.summary || {};
+        return `<div class="result-row" onclick="openDetail(${r.id})">
+            <span class="cage">${r.cage_name}</span>
+            <span class="meta">${r.prod_number ? '#' + r.prod_number + ' · ' : ''}${r.edb_type || ''} · ${(r.submitted_at||'').slice(0,10)}</span>
+            <span class="meta">${s.match ?? 0}✓ ${s.diff ?? 0}✗</span>
+            <span class="pf ${(r.pass_fail||'').toLowerCase()}">${r.pass_fail || '—'}</span>
+        </div>`;
+    }).join('');
+}
+
+function filterResults() {
+    const q  = document.getElementById('searchBox').value.toLowerCase();
+    const pf = document.getElementById('pfFilter').value;
+    renderResults(allResults.filter(r =>
+        (!q  || r.cage_name.toLowerCase().includes(q)) &&
+        (!pf || r.pass_fail === pf)
+    ));
+}
+
+async function openDetail(id) {
+    const resp = await fetch(`/api/results/${id}`);
+    const data = await resp.json();
+    showPage('submit', document.querySelector('nav button'));
+    showResult({ cageName: data.cage_name, edbType: data.edb_type, ifcData: data.ifc_data, delta: data.delta });
+}
+
+// ── Export ────────────────────────────────────────────────────────────────
+function exportExcel() { window.location = '/api/export'; }
+
+// ── Navigation ────────────────────────────────────────────────────────────
+function showPage(name, btn) {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+    document.getElementById('page-' + name).classList.add('active');
+    if (btn) btn.classList.add('active');
+    if (name === 'results') loadResults();
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────
+function toast(msg, err) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className   = err ? 'err' : '';
+    el.style.display = 'block';
+    setTimeout(() => el.style.display = 'none', 3500);
+}
+</script>
+</body>
+</html>
