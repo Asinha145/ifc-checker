@@ -33,7 +33,6 @@ app.post('/api/submit', upload.fields([
         const prodNo   = (req.body.prod_number || '').trim();
 
         if (!ifcFile) return res.status(400).json({ error: 'IFC file required.' });
-        if (!edbFile) return res.status(400).json({ error: 'EDB Excel file required.' });
 
         // Cage name from filename (strip extension)
         const cageName = path.basename(ifcFile.originalname, path.extname(ifcFile.originalname));
@@ -42,11 +41,46 @@ app.post('/api/submit', upload.fields([
         const parser  = new IFCParser();
         const content = ifcFile.buffer.toString('utf8');
         const bars    = await parser.parseFile(content);
-        const ifcData = parser.extractCheckerData(bars);
 
         // Save IFC to disk for future re-runs
         const ifcSavePath = path.join(DATA_DIR, 'ifcs', `${cageName}.ifc`);
         fs.writeFileSync(ifcSavePath, ifcFile.buffer);
+
+        // ── Slab cage: no EDB required ─────────────────────────────────
+        if (IFCParser.isSlabCage(bars)) {
+            const slabData    = parser.extractSlabData(bars);
+            const checkerData = parser.extractCheckerData(bars);
+            const ifcData     = { ...checkerData, slabData };
+
+            const submittedAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
+            const info = db.prepare(`
+                INSERT INTO submissions
+                    (cage_name, prod_number, edb_type, submitted_at, ifc_data, c01_ifc, pass_fail)
+                VALUES
+                    (@cage_name, @prod_number, @edb_type, @submitted_at, @ifc_data, @c01_ifc, @pass_fail)
+            `).run({
+                cage_name   : cageName,
+                prod_number : prodNo || null,
+                edb_type    : 'slab',
+                submitted_at: submittedAt,
+                ifc_data    : JSON.stringify(ifcData),
+                c01_ifc     : checkerData.c01Rejected ? 1 : 0,
+                pass_fail   : 'N/A',
+            });
+
+            saveResult(`${cageName}_${submittedAt.replace(/[ :]/g, '-')}`, {
+                cage_name: cageName, prod_number: prodNo || null, edb_type: 'slab',
+                submitted_at: submittedAt, ifc_data: ifcData,
+                c01_ifc: checkerData.c01Rejected ? 1 : 0, pass_fail: 'N/A',
+            }).catch(e => console.error('GitHub save error:', e.message));
+
+            return res.json({ id: info.lastInsertRowid, cageName, prodNo, edbType: 'slab', ifcData, slabData });
+        }
+
+        // ── Wall cage: EDB required ────────────────────────────────────
+        if (!edbFile) return res.status(400).json({ error: 'EDB Excel file required for wall cages.' });
+
+        const ifcData = parser.extractCheckerData(bars);
 
         // ── Parse EDB ──────────────────────────────────────────────────
         const edbData = await parseEDB(edbFile.buffer);
@@ -98,6 +132,46 @@ app.post('/api/submit', upload.fields([
             delta,
         });
 
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── GET /api/slab-excel/:id ───────────────────────────────────────────────
+app.get('/api/slab-excel/:id', async (req, res) => {
+    try {
+        const row = db.prepare('SELECT * FROM submissions WHERE id = ?').get(req.params.id);
+        if (!row || row.edb_type !== 'slab') return res.status(404).json({ error: 'Not a slab submission' });
+
+        const sd = JSON.parse(row.ifc_data).slabData;
+
+        const wb = new ExcelJS.Workbook();
+        await wb.xlsx.readFile(path.join(__dirname, 'templates', 'slab-template.xlsx'));
+        const ws = wb.getWorksheet('INPUT SPAN RESULTS');
+
+        // Write computed values into row 36 (input cells only — formula cells left intact)
+        const r = ws.getRow(36);
+        r.getCell('H').value = sd.cageLength;
+        r.getCell('I').value = sd.cageHeight;
+        r.getCell('J').value = sd.totalWeight;
+        r.getCell('N').value = sd.t1Dia;
+        r.getCell('O').value = sd.t1Spacing;
+        r.getCell('P').value = sd.t2Dia;
+        r.getCell('Q').value = sd.t2Spacing;
+        r.getCell('R').value = sd.t2Count;
+        r.getCell('T').value = sd.b1Dia;
+        r.getCell('U').value = sd.b1Spacing;
+        r.getCell('V').value = sd.b2Dia;
+        r.getCell('W').value = sd.b2Spacing;
+        r.getCell('X').value = sd.b2Count;
+        r.getCell('Z').value = sd.meshWeight;
+        r.commit();
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="${row.cage_name}_slab.xlsx"`);
+        await wb.xlsx.write(res);
+        res.end();
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: err.message });

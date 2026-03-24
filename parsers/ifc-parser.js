@@ -926,4 +926,93 @@ IFCParser.prototype.extractCheckerData = function(bars) {
     };
 };
 
+// ── Slab cage detection ────────────────────────────────────────────────────
+IFCParser.isSlabCage = function(bars) {
+    const layers = new Set(bars.map(b => b.Effective_Mesh_Layer).filter(Boolean));
+    return (layers.has('T1A') || layers.has('B1A')) && !layers.has('F1A') && !layers.has('N1A');
+};
+
+// ── Slab data extraction ───────────────────────────────────────────────────
+// Extracts values for the slab EDB Excel (INPUT SPAN RESULTS row):
+//   H=cageLength  I=cageHeight  J=totalWeight(T)
+//   N=t1Dia  O=t1Spacing  P=t2Dia  Q=t2Spacing  R=t2Count
+//   T=b1Dia  U=b1Spacing  V=b2Dia  W=b2Spacing  X=b2Count
+//   Z=meshWeight(T)
+//
+// Layer naming in ATK_rebar:
+//   T1 / T1-CPLR = height-direction bars in T1A face (spaced along length)
+//   T2 / T2-CPLR = length-direction bars in T1A face (spaced along height)
+//   B1 / B1-CPLR = height-direction bars in B1A face
+//   B2 / B2-CPLR = length-direction bars in B1A face
+//
+// Spacing formula: span_of_start_positions / count → round to nearest 5 mm
+// T1/B1 spacing uses only -CPLR bars (regular grid, excludes odd edge bars)
+IFCParser.prototype.extractSlabData = function(bars) {
+    const roundNearest5 = v => Math.round(v / 5) * 5;
+
+    const dominantDia = bs => {
+        const freq = {};
+        bs.forEach(b => { const d = b.Size || b.NominalDiameter_mm; if (d) freq[d] = (freq[d] || 0) + 1; });
+        const top = Object.entries(freq).sort((a, b) => b[1] - a[1])[0];
+        return top ? +top[0] : null;
+    };
+
+    const t1aBars = bars.filter(b => b.Effective_Mesh_Layer === 'T1A');
+    const b1aBars = bars.filter(b => b.Effective_Mesh_Layer === 'B1A');
+
+    const byRole = (bs, role) => bs.filter(b => {
+        const n = b.ATK_Layer_Name || '';
+        return n === role || n.startsWith(role + '-');
+    });
+
+    // T1/B1: use only -CPLR bars for spacing (skips lone edge bars that skew the span)
+    const t1all  = byRole(t1aBars, 'T1');
+    const t1cplr = t1all.filter(b => b.ATK_Layer_Name === 'T1-CPLR');
+    const t2     = byRole(t1aBars, 'T2');
+    const b1all  = byRole(b1aBars, 'B1');
+    const b1cplr = b1all.filter(b => b.ATK_Layer_Name === 'B1-CPLR');
+    const b2     = byRole(b1aBars, 'B2');
+
+    const uniquePos = (bs, axis) => [...new Set(
+        bs.map(b => Math.round(axis === 'x' ? b.Start_X : b.Start_Y)).filter(v => v != null)
+    )].sort((a, b) => a - b);
+
+    const calcSpacing = positions =>
+        positions.length >= 2
+            ? roundNearest5((positions[positions.length - 1] - positions[0]) / positions.length)
+            : null;
+
+    const t1Pos = uniquePos(t1cplr.length ? t1cplr : t1all, 'y');
+    const t2Pos = uniquePos(t2, 'x');
+    const b1Pos = uniquePos(b1cplr.length ? b1cplr : b1all, 'y');
+    const b2Pos = uniquePos(b2, 'x');
+
+    // Cage extents from mesh bars (end-to-end including bar lengths)
+    const meshBars = [...t1aBars, ...b1aBars];
+    const allX = meshBars.flatMap(b => [b.Start_X, b.End_X ?? b.Start_X]).filter(v => v != null);
+    const allY = meshBars.flatMap(b => [b.Start_Y, b.End_Y ?? b.Start_Y]).filter(v => v != null);
+    const lenMm = allX.length ? Math.max(...allX) - Math.min(...allX) : 0;
+    const hgtMm = allY.length ? Math.max(...allY) - Math.min(...allY) : 0;
+
+    const meshWt  = meshBars.reduce((s, b) => s + (b.Formula_Weight || 0), 0);
+    const totalWt = bars.reduce((s, b) => s + (b.Formula_Weight || 0), 0);
+
+    return {
+        cageLength : +(lenMm  / 1000).toFixed(2),   // H
+        cageHeight : +(hgtMm  / 1000).toFixed(2),   // I
+        totalWeight: +(totalWt / 1000).toFixed(3),  // J (tonnes)
+        t1Dia      : dominantDia(t1all),             // N
+        t1Spacing  : calcSpacing(t1Pos),             // O
+        t2Dia      : dominantDia(t2),                // P
+        t2Spacing  : calcSpacing(t2Pos),             // Q
+        t2Count    : t2Pos.length,                   // R
+        b1Dia      : dominantDia(b1all),             // T
+        b1Spacing  : calcSpacing(b1Pos),             // U
+        b2Dia      : dominantDia(b2),                // V
+        b2Spacing  : calcSpacing(b2Pos),             // W
+        b2Count    : b2Pos.length,                   // X
+        meshWeight : +(meshWt  / 1000).toFixed(3),  // Z (tonnes)
+    };
+};
+
 module.exports = IFCParser;

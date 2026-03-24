@@ -59,6 +59,7 @@ input[type=text]:focus{outline:none;border-color:#58a6ff}
 .badge.fail{background:#4a1a1a;color:#f85149}
 .badge.ubar{background:#1f3a5f;color:#79c0ff}
 .badge.strut{background:#3d2e00;color:#e3b341}
+.badge.slab{background:#1a3a3a;color:#56d364}
 .badge.c01{background:#4a1a1a;color:#f85149}
 .stat-row{display:flex;gap:20px;margin-bottom:16px;flex-wrap:wrap}
 .stat{display:flex;flex-direction:column}
@@ -131,6 +132,7 @@ tr:last-child td{border-bottom:none}
           <polyline points="10 9 9 9 8 9"/>
         </svg>
         <p>Drop EDB Excel file here or click</p>
+        <p style="font-size:.74rem;color:#484f58;margin-top:4px">Optional for roof slabs</p>
         <div class="fname" id="edbName"></div>
       </div>
     </div>
@@ -163,7 +165,23 @@ tr:last-child td{border-bottom:none}
         <div class="stat"><span class="stat-val" id="rRate">—</span><span class="stat-lbl">Pass rate</span></div>
         <div class="stat"><span class="stat-val" id="rBars">—</span><span class="stat-lbl">Total bars</span></div>
       </div>
-      <div class="delta-wrap">
+
+      <!-- Slab panel (roof slab cages only) -->
+      <div id="slabPanel" style="display:none">
+        <div style="margin-bottom:12px;display:flex;align-items:center;gap:12px">
+          <span style="font-size:.85rem;color:#8b949e">Extracted from IFC — ready to populate slab EDB</span>
+          <button class="btn btn-blue" id="btnSlabExcel" onclick="downloadSlabExcel()">Download Slab Excel</button>
+        </div>
+        <div class="delta-wrap">
+          <table>
+            <thead><tr><th>Cell</th><th>Parameter</th><th>Value</th></tr></thead>
+            <tbody id="slabBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Wall cage delta table -->
+      <div id="wallPanel" class="delta-wrap">
         <table id="deltaTable">
           <thead>
             <tr>
@@ -203,6 +221,7 @@ tr:last-child td{border-bottom:none}
 // ── State ──────────────────────────────────────────────────────────────────
 let files = { ifc: null, edb: null };
 let allResults = [];
+let currentSubmissionId = null;
 
 // ── Upload helpers ────────────────────────────────────────────────────────
 function dz(e, el, over) { e.preventDefault(); el.classList.toggle('drag', over); }
@@ -222,7 +241,7 @@ function setFile(type, f) {
     checkReady();
 }
 function checkReady() {
-    document.getElementById('btnSubmit').disabled = !(files.ifc && files.edb);
+    document.getElementById('btnSubmit').disabled = !files.ifc;
 }
 
 // ── Submit ────────────────────────────────────────────────────────────────
@@ -240,6 +259,7 @@ async function submit() {
         const resp = await fetch('/api/submit', { method: 'POST', body: fd });
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.error || 'Server error');
+        currentSubmissionId = data.id;
         showResult(data);
         toast('Submitted — ' + data.cageName);
     } catch (err) {
@@ -252,31 +272,82 @@ async function submit() {
 
 // ── Show result ───────────────────────────────────────────────────────────
 function showResult(data) {
-    const { cageName, edbType, ifcData, delta } = data;
-    const s = delta.summary;
+    const { cageName, edbType, ifcData, delta, slabData } = data;
+    const isSlab = edbType === 'slab';
 
     document.getElementById('rCageName').textContent = cageName;
 
     const pfBadge = document.getElementById('rPF');
-    pfBadge.textContent = delta.passFail;
-    pfBadge.className = 'badge ' + (delta.passFail === 'PASS' ? 'pass' : 'fail');
+    if (isSlab) {
+        pfBadge.textContent = 'Roof Slab';
+        pfBadge.className = 'badge slab';
+    } else {
+        pfBadge.textContent = delta.passFail;
+        pfBadge.className = 'badge ' + (delta.passFail === 'PASS' ? 'pass' : 'fail');
+    }
 
     const typeBadge = document.getElementById('rEdbType');
-    typeBadge.textContent = edbType === 'ubar' ? 'U-bar EDB' : 'Strut EDB';
-    typeBadge.className = 'badge ' + edbType;
-    typeBadge.style.display = 'inline-block';
+    if (!isSlab) {
+        typeBadge.textContent = edbType === 'ubar' ? 'U-bar EDB' : 'Strut EDB';
+        typeBadge.className = 'badge ' + edbType;
+        typeBadge.style.display = 'inline-block';
+    } else {
+        typeBadge.style.display = 'none';
+    }
 
     const c01 = document.getElementById('rC01');
     c01.style.display = ifcData.c01Rejected ? 'inline-block' : 'none';
 
-    document.getElementById('rMatch').textContent = s.match;
-    document.getElementById('rDiff').textContent  = s.diff + (s.ifcOnly ? ` (+${s.ifcOnly} IFC only)` : '');
-    document.getElementById('rRate').textContent  = (s.passRate ?? '—') + '%';
-    document.getElementById('rBars').textContent  = ifcData.totalBars;
+    if (isSlab) {
+        const sd = slabData || ifcData.slabData;
+        document.getElementById('rMatch').textContent = '—';
+        document.getElementById('rDiff').textContent  = '—';
+        document.getElementById('rRate').textContent  = '—';
+        document.getElementById('rBars').textContent  = ifcData.totalBars;
+        document.getElementById('slabPanel').style.display = 'block';
+        document.getElementById('wallPanel').style.display  = 'none';
+        buildSlabTable(sd);
+    } else {
+        const s = delta.summary;
+        document.getElementById('rMatch').textContent = s.match;
+        document.getElementById('rDiff').textContent  = s.diff + (s.ifcOnly ? ` (+${s.ifcOnly} IFC only)` : '');
+        document.getElementById('rRate').textContent  = (s.passRate ?? '—') + '%';
+        document.getElementById('rBars').textContent  = ifcData.totalBars;
+        document.getElementById('slabPanel').style.display = 'none';
+        document.getElementById('wallPanel').style.display  = 'block';
+        buildDeltaTable(delta);
+    }
 
-    buildDeltaTable(delta);
     document.getElementById('resultPanel').style.display = 'block';
     document.getElementById('resultPanel').scrollIntoView({ behavior: 'smooth' });
+}
+
+// ── Slab table ────────────────────────────────────────────────────────────
+function buildSlabTable(sd) {
+    if (!sd) return;
+    const rows = [
+        ['H', 'Cage Length (m)',      sd.cageLength],
+        ['I', 'Cage Height (m)',      sd.cageHeight],
+        ['J', 'Total Weight (T)',     sd.totalWeight],
+        ['N', 'T1 Dominant Dia (mm)', sd.t1Dia],
+        ['O', 'T1 Spacing (mm)',      sd.t1Spacing],
+        ['P', 'T2 Dominant Dia (mm)', sd.t2Dia],
+        ['Q', 'T2 Spacing (mm)',      sd.t2Spacing],
+        ['R', 'T2 Count (horizontal)',sd.t2Count],
+        ['T', 'B1 Dominant Dia (mm)', sd.b1Dia],
+        ['U', 'B1 Spacing (mm)',      sd.b1Spacing],
+        ['V', 'B2 Dominant Dia (mm)', sd.b2Dia],
+        ['W', 'B2 Spacing (mm)',      sd.b2Spacing],
+        ['X', 'B2 Count (horizontal)',sd.b2Count],
+        ['Z', 'Mesh-only Weight (T)', sd.meshWeight],
+    ];
+    document.getElementById('slabBody').innerHTML = rows.map(([cell, label, val]) =>
+        `<tr><td style="color:#79c0ff;font-weight:700">${cell}36</td><td style="color:#7d8590">${label}</td><td>${val ?? '<span class="null">—</span>'}</td></tr>`
+    ).join('');
+}
+
+function downloadSlabExcel() {
+    if (currentSubmissionId) window.location = `/api/slab-excel/${currentSubmissionId}`;
 }
 
 function buildDeltaTable(delta) {
@@ -371,6 +442,7 @@ function filterResults() {
 async function openDetail(id) {
     const resp = await fetch(`/api/results/${id}`);
     const data = await resp.json();
+    currentSubmissionId = id;
     showPage('submit', document.querySelector('nav button'));
     showResult({ cageName: data.cage_name, edbType: data.edb_type, ifcData: data.ifc_data, delta: data.delta });
 }
