@@ -987,12 +987,12 @@ IFCParser.prototype.extractSlabData = function(bars) {
     const b1Pos = uniquePos(b1cplr.length ? b1cplr : b1all, 'y');
     const b2Pos = uniquePos(b2, 'x');
 
-    // Cage extents from mesh bars (end-to-end including bar lengths)
     const meshBars = [...t1aBars, ...b1aBars];
-    const allX = meshBars.flatMap(b => [b.Start_X, b.End_X ?? b.Start_X]).filter(v => v != null);
-    const allY = meshBars.flatMap(b => [b.Start_Y, b.End_Y ?? b.Start_Y]).filter(v => v != null);
-    const lenMm = allX.length ? Math.max(...allX) - Math.min(...allX) : 0;
-    const hgtMm = allY.length ? Math.max(...allY) - Math.min(...allY) : 0;
+    const maxLen = bs => bs.length ? Math.max(...bs.map(b => b.Length || 0)) : 0;
+    // H36: cage length = T2/B2 bars run along the length dimension → their bar length = cage length
+    const lenMm = maxLen([...t2, ...b2]);
+    // I36: cage height = T1/B1 bars run along the height dimension → their bar length = cage height
+    const hgtMm = maxLen([...t1all, ...b1all]);
 
     const meshWt  = meshBars.reduce((s, b) => s + (b.Formula_Weight || 0), 0);
     const totalWt = bars.reduce((s, b) => s + (b.Formula_Weight || 0), 0);
