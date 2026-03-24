@@ -979,7 +979,7 @@ IFCParser.prototype.extractSlabData = function(bars) {
 
     const calcSpacing = positions =>
         positions.length >= 2
-            ? roundNearest5((positions[positions.length - 1] - positions[0]) / positions.length)
+            ? roundNearest5((positions[positions.length - 1] - positions[0]) / (positions.length - 1))
             : null;
 
     const t1Pos = uniquePos(t1cplr.length ? t1cplr : t1all, 'y');
